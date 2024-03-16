@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # Conditional sensitive properties
 
 resetprop_if_diff() {
