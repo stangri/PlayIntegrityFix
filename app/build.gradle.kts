@@ -5,15 +5,19 @@ plugins {
 android {
     namespace = "es.chiteroman.playintegrityfix"
     compileSdk = 34
-    ndkVersion = "26.2.11394342"
+    ndkVersion = "26.3.11579264"
     buildToolsVersion = "34.0.0"
+
+    buildFeatures {
+        prefab = true
+    }
 
     defaultConfig {
         applicationId = "es.chiteroman.playintegrityfix"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15940
-        versionName = "v15.9.4"
+        versionCode = 15980
+        versionName = "v15.9.8"
         multiDexEnabled = false
 
         packaging {
@@ -25,8 +29,8 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += "-DANDROID_STL=c++_static"
-                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DANDROID_STL=none"
+                arguments += "-DCMAKE_BUILD_TYPE=MinSizeRel"
                 arguments += "-DPlugin.Android.BionicLinkerUtil=ON"
 
                 cppFlags += "-std=c++20"
@@ -34,7 +38,6 @@ android {
                 cppFlags += "-fno-rtti"
                 cppFlags += "-fvisibility=hidden"
                 cppFlags += "-fvisibility-inlines-hidden"
-                cppFlags += "-flto"
             }
         }
     }
@@ -44,7 +47,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             multiDexEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            )
         }
     }
 
@@ -59,6 +64,10 @@ android {
             version = "3.22.1"
         }
     }
+}
+
+dependencies {
+    implementation("dev.rikka.ndk.thirdparty:cxx:1.2.0")
 }
 
 tasks.register("updateModuleProp") {
@@ -83,8 +92,10 @@ tasks.register("copyFiles") {
 
     doLast {
         val moduleFolder = project.rootDir.resolve("module")
-        val dexFile = project.layout.buildDirectory.get().asFile.resolve("intermediates/dex/release/minifyReleaseWithR8/classes.dex")
-        val soDir = project.layout.buildDirectory.get().asFile.resolve("intermediates/stripped_native_libs/release/out/lib")
+        val dexFile =
+            project.layout.buildDirectory.get().asFile.resolve("intermediates/dex/release/minifyReleaseWithR8/classes.dex")
+        val soDir =
+            project.layout.buildDirectory.get().asFile.resolve("intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out/lib")
 
         dexFile.copyTo(moduleFolder.resolve("classes.dex"), overwrite = true)
 

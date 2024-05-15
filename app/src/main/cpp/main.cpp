@@ -13,7 +13,7 @@
 
 #define PIF_JSON_DEFAULT "/data/adb/modules/playintegrityfix/pif.json"
 
-static std::string FIRST_API_LEVEL, SECURITY_PATCH, BUILD_ID;
+static nlohmann::json json;
 
 typedef void (*T_Callback)(void *, const char *, const char *, uint32_t);
 
@@ -27,20 +27,26 @@ static void modify_callback(void *cookie, const char *name, const char *value, u
 
     if (prop.ends_with("security_patch")) {
 
-        if (!SECURITY_PATCH.empty()) {
-            value = SECURITY_PATCH.c_str();
+        if (json.contains("SECURITY_PATCH")) {
+            if (json["SECURITY_PATCH"].is_string()) {
+                value = json["SECURITY_PATCH"].get<std::string>().c_str();
+            }
         }
 
     } else if (prop.ends_with("api_level")) {
 
-        if (!FIRST_API_LEVEL.empty()) {
-            value = FIRST_API_LEVEL.c_str();
+        if (json.contains("FIRST_API_LEVEL")) {
+            if (json["FIRST_API_LEVEL"].is_number_integer()) {
+                value = std::to_string(json["FIRST_API_LEVEL"].get<int>()).c_str();
+            }
         }
 
     } else if (prop.ends_with("build.id")) {
 
-        if (!BUILD_ID.empty()) {
-            value = BUILD_ID.c_str();
+        if (json.contains("BUILD_ID")) {
+            if (json["BUILD_ID"].is_string()) {
+                value = json["BUILD_ID"].get<std::string>().c_str();
+            }
         }
 
     } else if (prop == "sys.usb.state") {
@@ -67,14 +73,14 @@ my_system_property_read_callback(const prop_info *pi, T_Callback callback, void 
 }
 
 static void doHook() {
-    void *handle = DobbySymbolResolver("libc.so", "__system_property_read_callback");
+    void *handle = DobbySymbolResolver(nullptr, "__system_property_read_callback");
     if (handle == nullptr) {
-        LOGD("Couldn't hook '__system_property_read_callback'. Report to @chiteroman");
+        LOGD("Couldn't hook __system_property_read_callback");
         return;
     }
     DobbyHook(handle, (void *) my_system_property_read_callback,
               (void **) &o_system_property_read_callback);
-    LOGD("Found and hooked '__system_property_read_callback' at %p", handle);
+    LOGD("Found and hooked __system_property_read_callback at %p", handle);
 }
 
 class PlayIntegrityFix : public zygisk::ModuleBase {
@@ -86,77 +92,64 @@ public:
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
 
-        auto dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+        if (args != nullptr) {
 
-        if (dir == nullptr) {
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
+            auto dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+
+            if (dir != nullptr) {
+
+                bool isGms = std::string_view(dir).ends_with("/com.google.android.gms");
+
+                env->ReleaseStringUTFChars(args->app_data_dir, dir);
+
+                if (isGms) {
+
+                    api->setOption(zygisk::FORCE_DENYLIST_UNMOUNT);
+
+                    auto name = env->GetStringUTFChars(args->nice_name, nullptr);
+
+                    if (name != nullptr) {
+
+                        bool isGmsUnstable =
+                                std::string_view(name) == "com.google.android.gms.unstable";
+
+                        env->ReleaseStringUTFChars(args->nice_name, name);
+
+                        if (isGmsUnstable) {
+
+                            long dexSize = 0, jsonSize = 0;
+
+                            int fd = api->connectCompanion();
+
+                            read(fd, &dexSize, sizeof(long));
+                            read(fd, &jsonSize, sizeof(long));
+
+                            LOGD("Dex file size: %ld", dexSize);
+                            LOGD("Json file size: %ld", jsonSize);
+
+                            if (dexSize > 0 && jsonSize > 0) {
+
+                                dexVector.resize(dexSize);
+                                read(fd, dexVector.data(), dexSize);
+
+                                std::vector<uint8_t> jsonVector;
+
+                                jsonVector.resize(jsonSize);
+                                read(fd, jsonVector.data(), jsonSize);
+
+                                json = nlohmann::json::parse(jsonVector, nullptr, false, true);
+                            }
+
+                            close(fd);
+
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
-        bool isGms = std::string_view(dir).ends_with("/com.google.android.gms");
-
-        env->ReleaseStringUTFChars(args->app_data_dir, dir);
-
-        if (!isGms) {
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        api->setOption(zygisk::FORCE_DENYLIST_UNMOUNT);
-
-        auto name = env->GetStringUTFChars(args->nice_name, nullptr);
-
-        if (name == nullptr) {
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        bool isGmsUnstable = std::string_view(name) == "com.google.android.gms.unstable";
-
-        env->ReleaseStringUTFChars(args->nice_name, name);
-
-        if (!isGmsUnstable) {
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        long dexSize = 0, jsonSize = 0;
-
-        int fd = api->connectCompanion();
-
-        read(fd, &dexSize, sizeof(long));
-        read(fd, &jsonSize, sizeof(long));
-
-        LOGD("Dex file size: %ld", dexSize);
-        LOGD("Json file size: %ld", jsonSize);
-
-        if (dexSize < 1) {
-            close(fd);
-            LOGD("Dex file empty!");
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        dexVector.resize(dexSize);
-        read(fd, dexVector.data(), dexSize);
-
-        if (jsonSize < 1) {
-            close(fd);
-            LOGD("JSON file not found!");
-            api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
-            return;
-        }
-
-        std::vector<uint8_t> jsonVector;
-
-        jsonVector.resize(jsonSize);
-        read(fd, jsonVector.data(), jsonSize);
-
-        close(fd);
-
-        json = nlohmann::json::parse(jsonVector, nullptr, false, true);
-
-        parseJson();
+        api->setOption(zygisk::DLCLOSE_MODULE_LIBRARY);
     }
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs *args) override {
@@ -175,7 +168,6 @@ private:
     zygisk::Api *api = nullptr;
     JNIEnv *env = nullptr;
     std::vector<uint8_t> dexVector;
-    nlohmann::json json;
 
     void injectDex() {
         LOGD("get system classloader");
@@ -203,71 +195,6 @@ private:
         auto entryInit = env->GetStaticMethodID(entryPointClass, "init", "(Ljava/lang/String;)V");
         auto str = env->NewStringUTF(json.dump().c_str());
         env->CallStaticVoidMethod(entryPointClass, entryInit, str);
-    }
-
-    void parseJson() {
-        if (json.contains("FIRST_API_LEVEL")) {
-
-            if (json["FIRST_API_LEVEL"].is_number_integer()) {
-
-                FIRST_API_LEVEL = std::to_string(json["FIRST_API_LEVEL"].get<int>());
-
-            } else if (json["FIRST_API_LEVEL"].is_string()) {
-
-                FIRST_API_LEVEL = json["FIRST_API_LEVEL"].get<std::string>();
-            }
-
-            json.erase("FIRST_API_LEVEL");
-
-        } else if (json.contains("DEVICE_INITIAL_SDK_INT")) {
-
-            if (json["DEVICE_INITIAL_SDK_INT"].is_number_integer()) {
-
-                FIRST_API_LEVEL = std::to_string(json["DEVICE_INITIAL_SDK_INT"].get<int>());
-
-            } else if (json["DEVICE_INITIAL_SDK_INT"].is_string()) {
-
-                FIRST_API_LEVEL = json["DEVICE_INITIAL_SDK_INT"].get<std::string>();
-            }
-
-        } else {
-
-            LOGD("JSON file doesn't contain FIRST_API_LEVEL or DEVICE_INITIAL_SDK_INT keys :(");
-        }
-
-        if (json.contains("SECURITY_PATCH")) {
-
-            if (json["SECURITY_PATCH"].is_string()) {
-
-                SECURITY_PATCH = json["SECURITY_PATCH"].get<std::string>();
-            }
-
-        } else {
-
-            LOGD("JSON file doesn't contain SECURITY_PATCH key :(");
-        }
-
-        if (json.contains("ID")) {
-
-            if (json["ID"].is_string()) {
-
-                BUILD_ID = json["ID"].get<std::string>();
-            }
-
-        } else if (json.contains("BUILD_ID")) {
-
-            if (json["BUILD_ID"].is_string()) {
-
-                BUILD_ID = json["BUILD_ID"].get<std::string>();
-            }
-
-            json["ID"] = BUILD_ID;
-            json.erase("BUILD_ID");
-
-        } else {
-
-            LOGD("JSON file doesn't contain ID/BUILD_ID keys :(");
-        }
     }
 };
 

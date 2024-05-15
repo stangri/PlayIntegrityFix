@@ -23,30 +23,3 @@ if [ -f "/data/adb/pif.json" ]; then
     ui_print "- If you fail DEVICE verdict, remove /data/adb/pif.json file"
     ui_print "- If pif.json file doesn't exist, module will use default one"
 fi
-
-ui_print "- Removing conflict apps..."
-
-# Remove conflict apps
-APPS="
-/system/app/EliteDevelopmentModule
-/system/app/XInjectModule
-/system/product/app/XiaomiEUInject
-/system/product/app/XiaomiEUInject-Stub
-/system/system_ext/app/hentaiLewdbSVTDummy
-/system/system_ext/app/PifPrebuilt
-"
-
-for app in $APPS; do
-        if [ -d "$app" ]; then
-            directory="$MODPATH$app"
-            [ -d "$directory" ] || mkdir -p "$directory"
-            if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
-                mknod $directory c 0 0
-            else
-                touch $directory/.replace
-            fi
-            ui_print "- ${app##*/} app removed"
-        else
-            ui_print "- ${app##*/} app doesn't exist, skip"
-        fi
-done
